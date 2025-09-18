@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Movie Tracker</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎬 Movie Tracker</h1>
+            <p>Track your favorite movies and discover new ones!</p>
+        </header>
+
+        <main>
+            <!-- Movie Search Section -->
+            <section class="search-section">
+                <h2>Search Movies</h2>
+                <div class="search-container">
+                    <input type="text" id="searchInput" placeholder="Search for a movie..." />
+                    <button id="searchBtn">Search</button>
+                </div>
+                <div id="searchResults" class="movie-grid"></div>
+            </section>
+
+            <!-- Personal Movies Section -->
+            <section class="personal-movies-section">
+                <h2>My Movie Collection</h2>
+                <div class="filter-container">
+                    <select id="listFilter">
+                        <option value="">All Lists</option>
+                        <option value="favorites">Favorites</option>
+                        <option value="watchlist">Watchlist</option>
+                        <option value="watched">Watched</option>
+                    </select>
+                </div>
+                <div id="personalMovies" class="movie-grid"></div>
+            </section>
+        </main>
+
+        <!-- Movie Modal -->
+        <div id="movieModal" class="modal">
+            <div class="modal-content">
+                <span class="close">&times;</span>
+                <div id="movieDetails"></div>
+                <form id="addMovieForm">
+                    <h3>Add to Your Collection</h3>
+                    <div class="form-group">
+                        <label for="listName">List:</label>
+                        <select id="listName" required>
+                            <option value="watchlist">Watchlist</option>
+                            <option value="watched">Watched</option>
+                            <option value="favorites">Favorites</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="timesWatched">Times Watched:</label>
+                        <input type="number" id="timesWatched" min="0" value="0">
+                    </div>
+                    <div class="form-group">
+                        <label for="userRating">Your Rating (1-10):</label>
+                        <input type="number" id="userRating" min="1" max="10" step="0.1">
+                    </div>
+                    <div class="form-group">
+                        <label for="userReview">Your Review:</label>
+                        <textarea id="userReview" rows="4" placeholder="Write your thoughts about this movie..."></textarea>
+                    </div>
+                    <button type="submit">Add to Collection</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
