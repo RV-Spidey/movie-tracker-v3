@@ -2,6 +2,27 @@ require('dotenv').config();
 const axios = require('axios');
 const { Pool } = require('pg');
 
+// Cache for keyword IDs and movie keyword checks
+const keywordCache = new Map();
+const movieKeywordCache = new Map();
+
+// Sexual content keywords to filter out
+const SEXUAL_CONTENT_KEYWORDS = [
+    'erotica',
+    'erotic thriller', 
+    'pornography',
+    'pornographic film',
+    'sexploitation',
+    'explicit sex',
+    'softcore',
+    'hardcore',
+    'XXX',
+    'sexual intercourse',
+    'graphic sex'
+];
+
+let sexualKeywordIds = new Set();
+
 const express = require('express');
 const app = express();
 const port = process.env.PORT || 5000;
@@ -36,6 +57,61 @@ pool.connect((err, client, release) => {
     release();
 });
 
+// Initialize sexual content keyword IDs at startup
+async function initializeSexualKeywords() {
+    try {
+        console.log('Initializing sexual content keyword filters...');
+        for (const keyword of SEXUAL_CONTENT_KEYWORDS) {
+            try {
+                const response = await axios.get(
+                    `https://api.themoviedb.org/3/search/keyword?api_key=${process.env.TMDB_API_KEY}&query=${encodeURIComponent(keyword)}`,
+                    { timeout: 5000 }
+                );
+                
+                // Find exact match for the keyword
+                const exactMatch = response.data.results.find(k => k.name.toLowerCase() === keyword.toLowerCase());
+                if (exactMatch) {
+                    sexualKeywordIds.add(exactMatch.id);
+                    console.log(`Found keyword ID ${exactMatch.id} for "${keyword}"`);
+                }
+            } catch (error) {
+                console.log(`Could not resolve keyword "${keyword}": ${error.message}`);
+            }
+        }
+        console.log(`Initialized ${sexualKeywordIds.size} sexual content keyword filters`);
+    } catch (error) {
+        console.error('Error initializing sexual keywords:', error);
+    }
+}
+
+// Check if a movie has sexual content keywords
+async function hasSexualContentKeywords(tmdbId) {
+    // Check cache first
+    const cacheKey = `movie_${tmdbId}`;
+    if (movieKeywordCache.has(cacheKey)) {
+        return movieKeywordCache.get(cacheKey);
+    }
+    
+    try {
+        const response = await axios.get(
+            `https://api.themoviedb.org/3/movie/${tmdbId}/keywords?api_key=${process.env.TMDB_API_KEY}`,
+            { timeout: 5000 }
+        );
+        
+        const movieKeywordIds = response.data.keywords.map(k => k.id);
+        const hasSexualContent = movieKeywordIds.some(id => sexualKeywordIds.has(id));
+        
+        // Cache result for 24 hours
+        movieKeywordCache.set(cacheKey, hasSexualContent);
+        setTimeout(() => movieKeywordCache.delete(cacheKey), 24 * 60 * 60 * 1000);
+        
+        return hasSexualContent;
+    } catch (error) {
+        console.log(`Could not get keywords for movie ${tmdbId}, allowing by default`);
+        return false; // Default to allow if we can't check keywords
+    }
+}
+
 //the api endpoints
 
 // Step 1: Create the API Search Endpoint
@@ -43,51 +119,33 @@ pool.connect((err, client, release) => {
 app.get('/api/search', async (req, res) => {
     try {
         const query = req.query.q; // Get the search query from the URL
+        
+        // Check if keyword filtering is ready
+        if (sexualKeywordIds.size === 0) {
+            return res.status(503).json({ error: 'Content filtering is initializing, please try again shortly' });
+        }
+        
         const response = await axios.get(
-            `https://api.themoviedb.org/3/search/movie?api_key=${process.env.TMDB_API_KEY}&query=${query}&include_adult=false`
+            `https://api.themoviedb.org/3/search/movie?api_key=${process.env.TMDB_API_KEY}&query=${encodeURIComponent(query)}&include_adult=false`
         );
         
-        // Filter out adult content and check age ratings
+        // Filter out adult content
         let filteredResults = response.data.results.filter(movie => !movie.adult);
         
-        // Additional filtering: check for R and NC-17 ratings by getting release dates for each movie
-        const ratingPromises = filteredResults.map(async (movie) => {
+        // Additional filtering: check for sexual content keywords
+        const keywordPromises = filteredResults.map(async (movie) => {
             try {
-                const releaseResponse = await axios.get(
-                    `https://api.themoviedb.org/3/movie/${movie.id}/release_dates?api_key=${process.env.TMDB_API_KEY}`,
-                    { timeout: 5000 } // Add timeout to prevent slow requests
-                );
-                
-                // Find US certification - check all release dates, not just the first
-                const usRelease = releaseResponse.data.results.find(release => release.iso_3166_1 === 'US');
-                let certification = '';
-                
-                if (usRelease?.release_dates) {
-                    // Find the first non-empty certification
-                    for (const releaseDate of usRelease.release_dates) {
-                        if (releaseDate.certification) {
-                            certification = releaseDate.certification;
-                            break;
-                        }
-                    }
-                }
-                
-                // Only allow explicitly safe ratings (G, PG, PG-13) - default-deny everything else
-                const allowedRatings = ['G', 'PG', 'PG-13'];
-                if (!certification || !allowedRatings.includes(certification)) {
-                    return null; // Mark for removal - default deny if rating unknown or restricted
-                }
-                
-                return movie;
+                const hasSexualContent = await hasSexualContentKeywords(movie.id);
+                return hasSexualContent ? null : movie; // Remove if has sexual content
             } catch (error) {
-                console.log(`Could not get rating for movie ${movie.id}, excluding for safety`);
-                return null; // Exclude movie if we can't get rating info (default-deny)
+                console.log(`Could not check keywords for movie ${movie.id}, including by default`);
+                return movie; // Include movie if we can't check keywords
             }
         });
         
-        // Wait for all rating checks to complete and filter out nulls
-        const ratedResults = await Promise.all(ratingPromises);
-        filteredResults = ratedResults.filter(movie => movie !== null);
+        // Wait for all keyword checks to complete and filter out nulls
+        const keywordResults = await Promise.all(keywordPromises);
+        filteredResults = keywordResults.filter(movie => movie !== null);
         
         res.json(filteredResults); // Send the filtered search results back as JSON
     } catch (error) {
@@ -100,6 +158,12 @@ app.get('/api/search', async (req, res) => {
 app.get('/api/movie/:tmdbId', async (req, res) => {
     try {
         const tmdbId = req.params.tmdbId;
+        
+        // Check if keyword filtering is ready
+        if (sexualKeywordIds.size === 0) {
+            return res.status(503).json({ error: 'Content filtering is initializing, please try again shortly' });
+        }
+        
         const response = await axios.get(
             `https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${process.env.TMDB_API_KEY}`
         );
@@ -110,36 +174,10 @@ app.get('/api/movie/:tmdbId', async (req, res) => {
             return;
         }
         
-        // Check age rating - only allow G, PG, PG-13 movies
-        try {
-            const releaseResponse = await axios.get(
-                `https://api.themoviedb.org/3/movie/${tmdbId}/release_dates?api_key=${process.env.TMDB_API_KEY}`,
-                { timeout: 5000 }
-            );
-            
-            // Find US certification - check all release dates, not just the first
-            const usRelease = releaseResponse.data.results.find(release => release.iso_3166_1 === 'US');
-            let certification = '';
-            
-            if (usRelease?.release_dates) {
-                // Find the first non-empty certification
-                for (const releaseDate of usRelease.release_dates) {
-                    if (releaseDate.certification) {
-                        certification = releaseDate.certification;
-                        break;
-                    }
-                }
-            }
-            
-            // Only allow explicitly safe ratings (G, PG, PG-13) - default-deny everything else
-            const allowedRatings = ['G', 'PG', 'PG-13'];
-            if (!certification || !allowedRatings.includes(certification)) {
-                res.status(404).json({ error: 'Content not available - age restriction' });
-                return;
-            }
-        } catch (ratingError) {
-            console.log(`Could not get rating for movie ${tmdbId}, blocking access for safety`);
-            res.status(404).json({ error: 'Content not available - age restriction' });
+        // Check for sexual content keywords
+        const hasSexualContent = await hasSexualContentKeywords(tmdbId);
+        if (hasSexualContent) {
+            res.status(404).json({ error: 'Content not available' });
             return;
         }
         
@@ -227,6 +265,12 @@ app.put('/api/movies/:id', async (req, res) => {
     }
 });
 
-app.listen(port, '0.0.0.0', () => {
-    console.log(`Server is listening on port ${port}`);
+// Initialize sexual content keywords before starting server
+initializeSexualKeywords().then(() => {
+    app.listen(port, '0.0.0.0', () => {
+        console.log(`Server is listening on port ${port}`);
+    });
+}).catch((error) => {
+    console.error('Failed to initialize content filtering:', error);
+    process.exit(1);
 });
