@@ -1,6 +1,11 @@
 require('dotenv').config();
 const axios = require('axios');
 const { Pool } = require('pg');
+const bcrypt = require('bcrypt');
+const session = require('express-session');
+const passport = require('passport');
+const LocalStrategy = require('passport-local').Strategy;
+const connectPg = require('connect-pg-simple');
 
 // Cache for keyword IDs and movie keyword checks
 const keywordCache = new Map();
@@ -27,10 +32,13 @@ const express = require('express');
 const app = express();
 const port = process.env.PORT || 5000;
 
+// Trust proxy for secure cookies in production
+app.set('trust proxy', 1);
+
 app.use(express.json());
 app.use(express.static('public'));
 
-//Database connection
+//Database connection (moved before session configuration)
 // Railway provides DATABASE_URL, but we'll also support individual variables for local development
 const pool = new Pool(
     process.env.DATABASE_URL
@@ -56,6 +64,78 @@ pool.connect((err, client, release) => {
     console.log('Connected to PostgreSQL database');
     release();
 });
+
+// Session configuration (after pool initialization)
+const PgSession = connectPg(session);
+app.use(session({
+    store: new PgSession({
+        pool: pool,
+        tableName: 'sessions'
+    }),
+    secret: process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET environment variable is required'); })(),
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+    }
+}));
+
+// Passport configuration
+app.use(passport.initialize());
+app.use(passport.session());
+
+// Local strategy for username/password authentication
+passport.use(new LocalStrategy(
+    {
+        usernameField: 'email',
+        passwordField: 'password'
+    },
+    async (email, password, done) => {
+        try {
+            const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+            
+            if (result.rows.length === 0) {
+                return done(null, false, { message: 'Invalid email or password' });
+            }
+            
+            const user = result.rows[0];
+            const isValidPassword = await bcrypt.compare(password, user.password_hash);
+            
+            if (!isValidPassword) {
+                return done(null, false, { message: 'Invalid email or password' });
+            }
+            
+            return done(null, user);
+        } catch (error) {
+            return done(error);
+        }
+    }
+));
+
+passport.serializeUser((user, done) => {
+    done(null, user.id);
+});
+
+passport.deserializeUser(async (id, done) => {
+    try {
+        const result = await pool.query('SELECT id, first_name, last_name, email, profile_image_url FROM users WHERE id = $1', [id]);
+        done(null, result.rows[0]);
+    } catch (error) {
+        done(error);
+    }
+});
+
+// Authentication middleware
+const isAuthenticated = (req, res, next) => {
+    if (req.isAuthenticated()) {
+        return next();
+    }
+    res.status(401).json({ message: 'Authentication required' });
+};
+
+// Database connection moved above
 
 // Initialize sexual content keyword IDs at startup
 async function initializeSexualKeywords() {
@@ -111,6 +191,104 @@ async function hasSexualContentKeywords(tmdbId) {
         return false; // Default to allow if we can't check keywords
     }
 }
+
+//Authentication routes
+
+// Register endpoint
+app.post('/api/auth/register', async (req, res) => {
+    try {
+        const { firstName, lastName, email, password } = req.body;
+        
+        // Validate input
+        if (!firstName || !lastName || !email || !password) {
+            return res.status(400).json({ message: 'All fields are required' });
+        }
+        
+        if (password.length < 8) {
+            return res.status(400).json({ message: 'Password must be at least 8 characters long' });
+        }
+        
+        // Check if user already exists
+        const existingUser = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+        if (existingUser.rows.length > 0) {
+            return res.status(400).json({ message: 'User with this email already exists' });
+        }
+        
+        // Hash password
+        const saltRounds = 10;
+        const passwordHash = await bcrypt.hash(password, saltRounds);
+        
+        // Create user
+        const result = await pool.query(
+            'INSERT INTO users (first_name, last_name, email, password_hash) VALUES ($1, $2, $3, $4) RETURNING id, first_name, last_name, email',
+            [firstName, lastName, email, passwordHash]
+        );
+        
+        res.status(201).json({ 
+            message: 'User created successfully',
+            user: result.rows[0]
+        });
+    } catch (error) {
+        console.error('Registration error:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+});
+
+// Login endpoint
+app.post('/api/auth/login', (req, res, next) => {
+    passport.authenticate('local', (err, user, info) => {
+        if (err) {
+            return res.status(500).json({ message: 'Internal server error' });
+        }
+        
+        if (!user) {
+            return res.status(401).json({ message: info.message || 'Invalid credentials' });
+        }
+        
+        req.logIn(user, (err) => {
+            if (err) {
+                return res.status(500).json({ message: 'Login failed' });
+            }
+            
+            res.json({
+                message: 'Login successful',
+                user: {
+                    id: user.id,
+                    firstName: user.first_name,
+                    lastName: user.last_name,
+                    email: user.email
+                }
+            });
+        });
+    })(req, res, next);
+});
+
+// Logout endpoint
+app.post('/api/auth/logout', (req, res) => {
+    req.logout((err) => {
+        if (err) {
+            return res.status(500).json({ message: 'Logout failed' });
+        }
+        req.session.destroy((err) => {
+            if (err) {
+                return res.status(500).json({ message: 'Session destroy failed' });
+            }
+            res.clearCookie('connect.sid');
+            res.json({ message: 'Logout successful' });
+        });
+    });
+});
+
+// Get current user endpoint
+app.get('/api/auth/user', isAuthenticated, (req, res) => {
+    res.json({
+        id: req.user.id,
+        firstName: req.user.first_name,
+        lastName: req.user.last_name,
+        email: req.user.email,
+        profileImageUrl: req.user.profile_image_url
+    });
+});
 
 //the api endpoints
 
@@ -194,9 +372,10 @@ app.get('/api/movie/:tmdbId', async (req, res) => {
 
 // Step 2: Create the Get Movies Endpoint
 // This endpoint fetches all the movies from your personal PostgreSQL database.
-app.get('/api/movies', async (req, res) => {
+app.get('/api/movies', isAuthenticated, async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM movies ORDER BY created_at DESC');
+        const userId = req.user.id;
+        const result = await pool.query('SELECT * FROM movies WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
         res.json(result.rows); // Send the movies from your database back to the frontend
     } catch (err) {
         console.error('Database error:', err);
@@ -206,8 +385,9 @@ app.get('/api/movies', async (req, res) => {
 
 // Step 3: Create the Add/Delete Movies Endpoints
 // These endpoints handle saving and deleting movies in your database.
-app.post('/api/movies', async (req, res) => {
+app.post('/api/movies', isAuthenticated, async (req, res) => {
     const { tmdb_id, title, director, actors, description, genre, list_name, no_of_times_watched, user_rating, user_review, poster_path, release_date } = req.body;
+    const userId = req.user.id;
     
     // First check if the table has the new columns, if not add them
     try {
@@ -221,12 +401,12 @@ app.post('/api/movies', async (req, res) => {
     }
     
     const sql = `
-        INSERT INTO movies (tmdb_id, title, director, actors, description, genre, list_name, no_of_times_watched, user_rating, user_review, poster_path, release_date)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        INSERT INTO movies (tmdb_id, title, director, actors, description, genre, list_name, no_of_times_watched, user_rating, user_review, poster_path, release_date, user_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING id
     `;
     try {
-        const result = await pool.query(sql, [tmdb_id, title, director, actors, description, genre, list_name, no_of_times_watched, user_rating, user_review, poster_path, release_date]);
+        const result = await pool.query(sql, [tmdb_id, title, director, actors, description, genre, list_name, no_of_times_watched, user_rating, user_review, poster_path, release_date, userId]);
         res.json({ id: result.rows[0].id, message: 'Movie added successfully!' });
     } catch (err) {
         console.error('Database error:', err);
@@ -234,12 +414,17 @@ app.post('/api/movies', async (req, res) => {
     }
 });
 
-app.delete('/api/movies/:id', async (req, res) => {
+app.delete('/api/movies/:id', isAuthenticated, async (req, res) => {
     const { id } = req.params; // Get the movie ID from the URL
-    const sql = 'DELETE FROM movies WHERE id = $1';
+    const userId = req.user.id;
+    const sql = 'DELETE FROM movies WHERE id = $1 AND user_id = $2';
     try {
-        await pool.query(sql, [id]);
-        res.json({ message: 'Movie deleted successfully!' });
+        const result = await pool.query(sql, [id, userId]);
+        if (result.rowCount === 0) {
+            res.status(404).json({ error: 'Movie not found or unauthorized' });
+        } else {
+            res.json({ message: 'Movie deleted successfully!' });
+        }
     } catch (err) {
         console.error('Database error:', err);
         res.status(500).json({ error: err.message });
@@ -247,15 +432,16 @@ app.delete('/api/movies/:id', async (req, res) => {
 });
 
 // Update movie list (move between watchlist and watched)
-app.put('/api/movies/:id', async (req, res) => {
+app.put('/api/movies/:id', isAuthenticated, async (req, res) => {
     const { id } = req.params;
     const { list_name, no_of_times_watched } = req.body;
+    const userId = req.user.id;
     
-    const sql = 'UPDATE movies SET list_name = $1, no_of_times_watched = $2 WHERE id = $3';
+    const sql = 'UPDATE movies SET list_name = $1, no_of_times_watched = $2 WHERE id = $3 AND user_id = $4';
     try {
-        const result = await pool.query(sql, [list_name, no_of_times_watched || 0, id]);
+        const result = await pool.query(sql, [list_name, no_of_times_watched || 0, id, userId]);
         if (result.rowCount === 0) {
-            res.status(404).json({ error: 'Movie not found' });
+            res.status(404).json({ error: 'Movie not found or unauthorized' });
         } else {
             res.json({ message: 'Movie updated successfully!' });
         }

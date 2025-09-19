@@ -1,6 +1,7 @@
 // Global variables
 let searchTimeout = null;
 let cachedMovies = [];
+let currentUser = null;
 
 // Utility functions
 const API_BASE = '';
@@ -14,8 +15,62 @@ const $$ = (selector) => document.querySelectorAll(selector);
 const show = (element) => element?.classList.remove('hidden');
 const hide = (element) => element?.classList.add('hidden');
 
+// Authentication functions
+async function checkAuthStatus() {
+    try {
+        const response = await fetch('/api/auth/user');
+        if (response.ok) {
+            currentUser = await response.json();
+            updateNavigation(true);
+        } else {
+            currentUser = null;
+            updateNavigation(false);
+        }
+    } catch (error) {
+        console.log('Not authenticated');
+        currentUser = null;
+        updateNavigation(false);
+    }
+}
+
+function updateNavigation(isAuthenticated) {
+    const loginBtn = $('#loginBtn');
+    const registerBtn = $('#registerBtn');
+    const logoutBtn = $('#logoutBtn');
+    
+    if (isAuthenticated) {
+        loginBtn?.style.setProperty('display', 'none');
+        registerBtn?.style.setProperty('display', 'none');
+        logoutBtn?.style.setProperty('display', 'block');
+    } else {
+        loginBtn?.style.setProperty('display', 'block');
+        registerBtn?.style.setProperty('display', 'block');
+        logoutBtn?.style.setProperty('display', 'none');
+    }
+}
+
+async function logout() {
+    try {
+        await fetch('/api/auth/logout', { method: 'POST' });
+        currentUser = null;
+        updateNavigation(false);
+        window.location.href = '/login.html';
+    } catch (error) {
+        console.error('Logout error:', error);
+    }
+}
+
 // Initialize app based on current page
 document.addEventListener('DOMContentLoaded', () => {
+    // Check authentication status first
+    checkAuthStatus();
+    
+    // Set up logout button handler
+    const logoutBtn = $('#logoutBtn');
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', logout);
+    }
+    
     const currentPage = window.location.pathname.split('/').pop() || 'index.html';
     
     switch (currentPage) {

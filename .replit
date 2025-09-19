@@ -5,6 +5,7 @@ channel = "stable-25_05"
 
 [agent]
 expertMode = true
+integrations = ["javascript_log_in_with_replit:1.0.0"]
 
 [workflows]
 runButton = "Project"
@@ -35,7 +36,7 @@ localPort = 5000
 externalPort = 80
 
 [[ports]]
-localPort = 46645
+localPort = 37275
 externalPort = 3000
 
 [deployment]
