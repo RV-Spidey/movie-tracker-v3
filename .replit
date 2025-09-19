@@ -1,4 +1,4 @@
-modules = ["nodejs-14", "web"]
+modules = ["web", "nodejs-20"]
 
 [nix]
 channel = "stable-25_05"
@@ -22,20 +22,20 @@ args = "Movie Tracker Server"
 name = "Movie Tracker Server"
 author = "agent"
 
+[workflows.workflow.metadata]
+outputType = "webview"
+
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "npm start"
 waitForPort = 5000
-
-[workflows.workflow.metadata]
-outputType = "webview"
 
 [[ports]]
 localPort = 5000
 externalPort = 80
 
 [[ports]]
-localPort = 36771
+localPort = 46645
 externalPort = 3000
 
 [deployment]
