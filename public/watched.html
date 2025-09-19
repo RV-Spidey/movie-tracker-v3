@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Movie Tracker — Watched</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="min-h-screen">
+
+  <!-- Navbar -->
+  <header>
+    <div class="header-container">
+      <a href="index.html" class="brand-link">
+        <span class="brand-icon">
+          <i class="fa-solid fa-film"></i>
+        </span>
+        <span class="brand-text">Movie Tracker</span>
+      </a>
+      <nav>
+        <a href="index.html" class="nav-btn">Home</a>
+        <a href="watchlist.html" class="nav-btn">Watchlist</a>
+        <a href="watched.html" class="nav-btn active">Watched</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Watched Content -->
+  <main>
+    <div class="list-header">
+      <h2>Watched Movies</h2>
+      <button id="clearWatched" class="clear-btn-main">
+        <i class="fa-regular fa-trash-can mr-2"></i> Clear all
+      </button>
+    </div>
+    <div id="watchedGrid" class="results-grid"></div>
+    <div id="emptyWatched" class="empty-state hidden">You haven’t watched any movies yet.</div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

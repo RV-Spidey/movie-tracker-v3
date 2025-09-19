@@ -104,30 +104,19 @@ function initHomePage() {
     }
 
     function displaySearchResults(movies) {
-        // Filter out any adult content as an additional safety measure
-        const filteredMovies = movies.filter(movie => !movie.adult);
-        
-        resultsGrid.innerHTML = filteredMovies.map(movie => `
-            <div class="movie-card poster-hover">
-                <div onclick="goToMovieDetails(${movie.id})" class="movie-poster-link" style="cursor: pointer;">
+        resultsGrid.innerHTML = movies.map(movie => `
+            <div class="movie-card poster-hover" onclick="goToMovieDetails(${movie.id})">
+                <a class="movie-poster-link">
                     <img 
                         src="${movie.poster_path ? TMDB_IMAGE_BASE + movie.poster_path : '/api/placeholder/300/450'}" 
                         alt="${movie.title}"
                         class="movie-card-poster"
                         onerror="this.src='/api/placeholder/300/450'"
                     >
-                </div>
+                </a>
                 <div class="movie-card-content">
                     <h3 class="movie-card-title">${movie.title}</h3>
                     <p class="movie-card-year">${movie.release_date ? new Date(movie.release_date).getFullYear() : 'Unknown'}</p>
-                    <div style="margin-top: 0.5rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                        <button onclick="addToList('watchlist', ${movie.id}, ${JSON.stringify(movie).replace(/"/g, '&quot;')})" class="btn btn-primary" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">
-                            Watchlist
-                        </button>
-                        <button onclick="addToList('watched', ${movie.id}, ${JSON.stringify(movie).replace(/"/g, '&quot;')})" class="btn btn-secondary" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">
-                            Watched
-                        </button>
-                    </div>
                 </div>
             </div>
         `).join('');
@@ -188,7 +177,7 @@ async function loadMoviesByList(listType, gridElement, emptyElement) {
         }
 
         hide(emptyElement);
-        displayMovieGrid(filteredMovies, gridElement, listType);
+        displayMovieGrid(filteredMovies, gridElement);
     } catch (error) {
         console.error(`Error loading ${listType}:`, error);
         show(emptyElement);
@@ -196,68 +185,29 @@ async function loadMoviesByList(listType, gridElement, emptyElement) {
     }
 }
 
-function displayMovieGrid(movies, gridElement, listType = null) {
-    gridElement.innerHTML = movies.map(movie => {
-        // Use poster_path from our database or construct TMDB URL from stored path
-        let posterSrc = '/api/placeholder/300/450';
-        if (movie.poster_path) {
-            // If it's already a full URL, use it; otherwise construct TMDB URL
-            posterSrc = movie.poster_path.startsWith('http') ? movie.poster_path : TMDB_IMAGE_BASE + movie.poster_path;
-        }
-        
-        // Determine what actions to show based on current list
-        let actionButtons = '';
-        if (listType === 'watchlist') {
-            actionButtons = `
-                <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                    <button onclick="moveToWatched(${movie.id})" class="btn btn-secondary" style="font-size: 0.75rem; padding: 0.25rem 0.5rem; flex: 1;">
-                        ✓ Mark as Watched
-                    </button>
-                    <button onclick="removeFromCollection(${movie.id})" class="btn clear-btn-main" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">
-                        Remove
-                    </button>
-                </div>
-            `;
-        } else if (listType === 'watched') {
-            actionButtons = `
-                <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                    <button onclick="moveToWatchlist(${movie.id})" class="btn btn-primary" style="font-size: 0.75rem; padding: 0.25rem 0.5rem; flex: 1;">
-                        ← Back to Watchlist
-                    </button>
-                    <button onclick="removeFromCollection(${movie.id})" class="btn clear-btn-main" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;">
-                        Remove
-                    </button>
-                </div>
-            `;
-        }
-        
-        return `
-            <div class="movie-card poster-hover">
-                <a href="film.html?id=${movie.tmdb_id}" class="movie-poster-link">
-                    <img 
-                        src="${posterSrc}" 
-                        alt="${movie.title}"
-                        class="movie-card-poster"
-                        onerror="this.src='/api/placeholder/300/450'"
-                    >
-                </a>
-                <div class="movie-card-content">
-                    <h3 class="movie-card-title">${movie.title}</h3>
-                    <p class="movie-card-year">${movie.release_date ? new Date(movie.release_date).getFullYear() : 'Year unknown'}</p>
-                    ${movie.user_rating ? `<p class="movie-card-year">⭐ ${movie.user_rating}/10</p>` : ''}
-                    ${actionButtons}
-                </div>
+function displayMovieGrid(movies, gridElement) {
+    gridElement.innerHTML = movies.map(movie => `
+        <div class="movie-card poster-hover">
+            <a href="film.html?id=${movie.tmdb_id}" class="movie-poster-link">
+                <img 
+                    src="${movie.poster_path ? TMDB_IMAGE_BASE + movie.poster_path : '/api/placeholder/300/450'}" 
+                    alt="${movie.title}"
+                    class="movie-card-poster"
+                    onerror="this.src='/api/placeholder/300/450'"
+                >
+            </a>
+            <div class="movie-card-content">
+                <h3 class="movie-card-title">${movie.title}</h3>
+                <p class="movie-card-year">${movie.release_date ? new Date(movie.release_date).getFullYear() : 'Year unknown'}</p>
+                ${movie.user_rating ? `<p class="movie-card-year">⭐ ${movie.user_rating}/10</p>` : ''}
             </div>
-        `;
-    }).join('');
+        </div>
+    `).join('');
 }
 
 async function loadMovieDetails(tmdbId) {
     const movieDetails = $('#movieDetails');
     if (!movieDetails) return;
-
-    // Show loading state
-    movieDetails.innerHTML = '<p>Loading movie details...</p>';
 
     try {
         // First try to get from our database
@@ -265,54 +215,26 @@ async function loadMovieDetails(tmdbId) {
         const userMovies = await dbResponse.json();
         const userMovie = userMovies.find(movie => movie.tmdb_id == tmdbId);
 
-        let tmdbMovie;
-        
-        if (userMovie) {
-            // If we have the movie in our database, search by title for more reliable results
-            const tmdbResponse = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(userMovie.title)}`);
-            const tmdbMovies = await tmdbResponse.json();
-            tmdbMovie = tmdbMovies.find(movie => movie.id == tmdbId) || tmdbMovies[0];
-        } else {
-            // If we don't have it in database, get directly by TMDB ID
-            const tmdbResponse = await fetch(`${API_BASE}/api/movie/${tmdbId}`);
-            if (tmdbResponse.ok) {
-                tmdbMovie = await tmdbResponse.json();
-            }
-        }
+        // Get full details from TMDB
+        const tmdbResponse = await fetch(`${API_BASE}/api/search?q=${tmdbId}`);
+        const tmdbMovies = await tmdbResponse.json();
+        const tmdbMovie = tmdbMovies.find(movie => movie.id == tmdbId) || tmdbMovies[0];
 
         if (!tmdbMovie) {
-            movieDetails.innerHTML = '<div class="empty-state">Movie not found. Please try searching from the home page.</div>';
+            movieDetails.innerHTML = '<p>Movie not found.</p>';
             return;
         }
 
         displayMovieDetails(tmdbMovie, userMovie);
     } catch (error) {
         console.error('Error loading movie details:', error);
-        movieDetails.innerHTML = '<div class="empty-state">Error loading movie details. Please try again.</div>';
+        movieDetails.innerHTML = '<p>Error loading movie details.</p>';
     }
 }
 
 function displayMovieDetails(movie, userMovie) {
     const movieDetails = $('#movieDetails');
     const isInCollection = !!userMovie;
-
-    // Handle genres - TMDB API returns different formats
-    let genresDisplay = '';
-    if (movie.genres && movie.genres.length > 0) {
-        // Direct API call returns genre objects with name property
-        genresDisplay = `
-            <div class="details-genres">
-                ${movie.genres.map(genre => `<span class="genre-tag">${genre.name}</span>`).join('')}
-            </div>
-        `;
-    } else if (movie.genre_ids && movie.genre_ids.length > 0) {
-        // Search API returns genre IDs
-        genresDisplay = `
-            <div class="details-genres">
-                ${movie.genre_ids.map(genreId => `<span class="genre-tag">Genre ${genreId}</span>`).join('')}
-            </div>
-        `;
-    }
 
     movieDetails.innerHTML = `
         <div class="movie-details-grid">
@@ -336,14 +258,18 @@ function displayMovieDetails(movie, userMovie) {
                 <h3 class="details-plot-title">Plot</h3>
                 <p class="details-plot">${movie.overview || 'No plot description available.'}</p>
                 
-                ${genresDisplay}
+                ${movie.genre_ids && movie.genre_ids.length > 0 ? `
+                    <div class="details-genres">
+                        ${movie.genre_ids.map(genreId => `<span class="genre-tag">Genre ${genreId}</span>`).join('')}
+                    </div>
+                ` : ''}
                 
                 <div style="margin-top: 2rem; display: flex; gap: 1rem; flex-wrap: wrap;">
                     ${!isInCollection ? `
-                        <button onclick="addToList('watchlist', ${movie.id}, ${JSON.stringify(movie).replace(/"/g, '&quot;')})" class="btn btn-primary" style="padding: 0.75rem 1.5rem; border-radius: 0.5rem;">
+                        <button onclick="addToList('watchlist', ${movie.id})" class="btn btn-primary" style="padding: 0.75rem 1.5rem; border-radius: 0.5rem;">
                             Add to Watchlist
                         </button>
-                        <button onclick="addToList('watched', ${movie.id}, ${JSON.stringify(movie).replace(/"/g, '&quot;')})" class="btn btn-secondary" style="padding: 0.75rem 1.5rem; border-radius: 0.5rem;">
+                        <button onclick="addToList('watched', ${movie.id})" class="btn btn-secondary" style="padding: 0.75rem 1.5rem; border-radius: 0.5rem;">
                             Mark as Watched
                         </button>
                     ` : `
@@ -366,62 +292,29 @@ function displayMovieDetails(movie, userMovie) {
 }
 
 // Action Functions
-async function addToList(listType, tmdbId, movieData = null) {
+async function addToList(listType, tmdbId) {
     try {
-        let movie = movieData;
-        
-        // If no movie data provided, try to fetch it
-        if (!movie) {
-            try {
-                // First try to get movie directly by TMDB ID
-                const directResponse = await fetch(`${API_BASE}/api/movie/${tmdbId}`);
-                if (directResponse.ok) {
-                    movie = await directResponse.json();
-                } else {
-                    // Fallback: try searching by ID (less reliable)
-                    const searchResponse = await fetch(`${API_BASE}/api/search?q=${tmdbId}`);
-                    const movies = await searchResponse.json();
-                    movie = movies.find(m => m.id == tmdbId) || movies[0];
-                }
-            } catch (fetchError) {
-                console.error('Error fetching movie data:', fetchError);
-            }
-        }
+        // Get movie details first
+        const response = await fetch(`${API_BASE}/api/search?q=${tmdbId}`);
+        const movies = await response.json();
+        const movie = movies.find(m => m.id == tmdbId) || movies[0];
 
         if (!movie) {
-            alert('Movie not found. Please try searching again.');
-            return;
-        }
-        
-        // Filter out adult content
-        if (movie.adult) {
-            alert('This content is not available.');
+            alert('Movie not found');
             return;
         }
 
-        // Handle genres from different API responses
-        let genreString = '';
-        if (movie.genre_ids && movie.genre_ids.length > 0) {
-            // Search API returns genre IDs
-            genreString = movie.genre_ids.join(',');
-        } else if (movie.genres && movie.genres.length > 0) {
-            // Direct API returns genre objects with names
-            genreString = movie.genres.map(g => g.name).join(',');
-        }
-
-        const dbMovieData = {
+        const movieData = {
             tmdb_id: movie.id,
             title: movie.title,
             director: '',
             actors: '',
             description: movie.overview || '',
-            genre: genreString,
+            genre: movie.genre_ids ? movie.genre_ids.join(',') : '',
             list_name: listType,
             no_of_times_watched: listType === 'watched' ? 1 : 0,
             user_rating: null,
-            user_review: '',
-            poster_path: movie.poster_path || '',
-            release_date: movie.release_date || ''
+            user_review: ''
         };
 
         const addResponse = await fetch(`${API_BASE}/api/movies`, {
@@ -429,13 +322,14 @@ async function addToList(listType, tmdbId, movieData = null) {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify(dbMovieData)
+            body: JSON.stringify(movieData)
         });
 
         const result = await addResponse.json();
 
         if (addResponse.ok) {
             alert(`Movie added to ${listType}!`);
+            // Reload current page
             window.location.reload();
         } else {
             alert('Error adding movie: ' + (result.error || 'Unknown error'));
@@ -490,62 +384,6 @@ async function clearMoviesList(listType) {
     }
 }
 
-// Move movie from watchlist to watched
-async function moveToWatched(movieId) {
-    try {
-        const response = await fetch(`${API_BASE}/api/movies/${movieId}`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                list_name: 'watched',
-                no_of_times_watched: 1
-            })
-        });
-
-        const result = await response.json();
-
-        if (response.ok) {
-            alert('Movie moved to watched list!');
-            window.location.reload();
-        } else {
-            alert('Error moving movie: ' + (result.error || 'Unknown error'));
-        }
-    } catch (error) {
-        console.error('Error moving movie to watched:', error);
-        alert('Error moving movie to watched list.');
-    }
-}
-
-// Move movie from watched back to watchlist
-async function moveToWatchlist(movieId) {
-    try {
-        const response = await fetch(`${API_BASE}/api/movies/${movieId}`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                list_name: 'watchlist',
-                no_of_times_watched: 0
-            })
-        });
-
-        const result = await response.json();
-
-        if (response.ok) {
-            alert('Movie moved back to watchlist!');
-            window.location.reload();
-        } else {
-            alert('Error moving movie: ' + (result.error || 'Unknown error'));
-        }
-    } catch (error) {
-        console.error('Error moving movie to watchlist:', error);
-        alert('Error moving movie to watchlist.');
-    }
-}
-
 // Navigation Functions
 function goToMovieDetails(tmdbId) {
     window.location.href = `film.html?id=${tmdbId}`;
@@ -560,5 +398,3 @@ function getMovieIdFromUrl() {
 window.addToList = addToList;
 window.removeFromCollection = removeFromCollection;
 window.goToMovieDetails = goToMovieDetails;
-window.moveToWatched = moveToWatched;
-window.moveToWatchlist = moveToWatchlist;
