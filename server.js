@@ -46,8 +46,49 @@ app.get('/api/search', async (req, res) => {
         const response = await axios.get(
             `https://api.themoviedb.org/3/search/movie?api_key=${process.env.TMDB_API_KEY}&query=${query}&include_adult=false`
         );
-        // Additional client-side filtering to ensure no adult content
-        const filteredResults = response.data.results.filter(movie => !movie.adult);
+        
+        // Filter out adult content and check age ratings
+        let filteredResults = response.data.results.filter(movie => !movie.adult);
+        
+        // Additional filtering: check for R and NC-17 ratings by getting release dates for each movie
+        const ratingPromises = filteredResults.map(async (movie) => {
+            try {
+                const releaseResponse = await axios.get(
+                    `https://api.themoviedb.org/3/movie/${movie.id}/release_dates?api_key=${process.env.TMDB_API_KEY}`,
+                    { timeout: 5000 } // Add timeout to prevent slow requests
+                );
+                
+                // Find US certification - check all release dates, not just the first
+                const usRelease = releaseResponse.data.results.find(release => release.iso_3166_1 === 'US');
+                let certification = '';
+                
+                if (usRelease?.release_dates) {
+                    // Find the first non-empty certification
+                    for (const releaseDate of usRelease.release_dates) {
+                        if (releaseDate.certification) {
+                            certification = releaseDate.certification;
+                            break;
+                        }
+                    }
+                }
+                
+                // Only allow explicitly safe ratings (G, PG, PG-13) - default-deny everything else
+                const allowedRatings = ['G', 'PG', 'PG-13'];
+                if (!certification || !allowedRatings.includes(certification)) {
+                    return null; // Mark for removal - default deny if rating unknown or restricted
+                }
+                
+                return movie;
+            } catch (error) {
+                console.log(`Could not get rating for movie ${movie.id}, excluding for safety`);
+                return null; // Exclude movie if we can't get rating info (default-deny)
+            }
+        });
+        
+        // Wait for all rating checks to complete and filter out nulls
+        const ratedResults = await Promise.all(ratingPromises);
+        filteredResults = ratedResults.filter(movie => movie !== null);
+        
         res.json(filteredResults); // Send the filtered search results back as JSON
     } catch (error) {
         console.error('TMDB API Error:', error);
@@ -66,6 +107,39 @@ app.get('/api/movie/:tmdbId', async (req, res) => {
         // Filter out adult content
         if (response.data.adult) {
             res.status(404).json({ error: 'Content not available' });
+            return;
+        }
+        
+        // Check age rating - only allow G, PG, PG-13 movies
+        try {
+            const releaseResponse = await axios.get(
+                `https://api.themoviedb.org/3/movie/${tmdbId}/release_dates?api_key=${process.env.TMDB_API_KEY}`,
+                { timeout: 5000 }
+            );
+            
+            // Find US certification - check all release dates, not just the first
+            const usRelease = releaseResponse.data.results.find(release => release.iso_3166_1 === 'US');
+            let certification = '';
+            
+            if (usRelease?.release_dates) {
+                // Find the first non-empty certification
+                for (const releaseDate of usRelease.release_dates) {
+                    if (releaseDate.certification) {
+                        certification = releaseDate.certification;
+                        break;
+                    }
+                }
+            }
+            
+            // Only allow explicitly safe ratings (G, PG, PG-13) - default-deny everything else
+            const allowedRatings = ['G', 'PG', 'PG-13'];
+            if (!certification || !allowedRatings.includes(certification)) {
+                res.status(404).json({ error: 'Content not available - age restriction' });
+                return;
+            }
+        } catch (ratingError) {
+            console.log(`Could not get rating for movie ${tmdbId}, blocking access for safety`);
+            res.status(404).json({ error: 'Content not available - age restriction' });
             return;
         }
         
